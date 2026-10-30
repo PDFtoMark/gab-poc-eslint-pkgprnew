@@ -1,0 +1,28 @@
+name: Publish to pkg.pr.new
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['!**']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.repository == 'PDFtoMark/gab-poc-eslint-pkgprnew'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Write output.json
+        run: |
+          cat > output.json <<'JSON'
+          {"number": 1, "sha": "deadbeef", "packages": [{"name": "eslint-plugin-svelte", "url": "https://pkg.pr.new/eslint-plugin-svelte@deadbeef"}]}
+          JSON
+      - name: Upload output
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: output
+          path: ./output.json
